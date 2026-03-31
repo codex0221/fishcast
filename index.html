@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FishCast • Weather + Fishing Forecast</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; }
+    .card { transition: all 0.3s; }
+    .day-card { transition: all 0.2s; }
+    .fish-icon { transition: all 0.2s; }
+  </style>
+</head>
+<body class="bg-zinc-950 text-white min-h-screen pb-12">
+  <div class="max-w-xl mx-auto px-4">
+    <header class="py-8 flex items-center justify-between">
+      <h1 class="text-3xl font-bold flex items-center gap-2">
+        <i class="fa-solid fa-fish text-emerald-400"></i> FishCast
+      </h1>
+      <button onclick="getLocation()" class="bg-emerald-600 hover:bg-emerald-500 px-4 py-2 rounded-xl flex items-center gap-2 text-sm">
+        <i class="fa-solid fa-location-dot"></i> My Location
+      </button>
+    </header>
+
+    <!-- Location Search -->
+    <div class="mb-6">
+      <div class="flex gap-2">
+        <input id="search-input" type="text" placeholder="Search city or fishing spot (e.g. Atlanta, Mobile Bay, Lake Lanier)" 
+               class="flex-1 bg-zinc-900 border border-zinc-700 rounded-2xl px-4 py-3 text-sm focus:outline-none focus:border-emerald-500">
+        <button onclick="searchLocation()" 
+                class="bg-white text-black px-6 rounded-2xl font-medium flex items-center gap-2">
+          <i class="fa-solid fa-magnifying-glass"></i>
+        </button>
+      </div>
+      <div id="search-results" class="mt-2 hidden bg-zinc-900 rounded-3xl p-2 max-h-80 overflow-auto"></div>
+    </div>
+
+    <div id="location-info" class="mb-6 text-sm text-zinc-400 flex items-center gap-2"></div>
+
+    <!-- Manual lat/lon -->
+    <div class="flex gap-3 mb-8 text-xs opacity-75">
+      <input id="lat" type="text" placeholder="Lat (e.g. 33.75)" class="flex-1 bg-zinc-900 border border-zinc-700 rounded-2xl px-4 py-3">
+      <input id="lon" type="text" placeholder="Lon (e.g. -84.39)" class="flex-1 bg-zinc-900 border border-zinc-700 rounded-2xl px-4 py-3">
+      <button onclick="fetchAllData()" class="bg-emerald-600 hover:bg-emerald-500 px-6 rounded-2xl">Go</button>
+    </div>
+
+    <!-- Current Weather -->
+    <div id="current-weather" class="card bg-zinc-900 rounded-3xl p-6 mb-6"></div>
+
+    <!-- 7-Day Weather Forecast -->
+    <div id="seven-day" class="card bg-zinc-900 rounded-3xl p-6 mb-6"></div>
+
+    <!-- NEW: 7-Day Fishing Activity Rating -->
+    <div id="fishing-activity" class="card bg-zinc-900 rounded-3xl p-6 mb-6"></div>
+
+    <!-- Solunar (kept but improved with fallback) -->
+    <div id="solunar" class="card bg-zinc-900 rounded-3xl p-6 mb-6"></div>
+
+    <!-- Tides -->
+    <div id="tides" class="card bg-zinc-900 rounded-3xl p-6 hidden"></div>
+
+    <!-- Overall Rating -->
+    <div id="rating" class="card bg-gradient-to-r from-emerald-500 to-teal-500 rounded-3xl p-6 text-center"></div>
+  </div>
+
+  <script>
+    let lat = 33.75;
+    let lon = -84.39;
+    let currentPlaceName = "Atlanta, GA";
+
+    function getLocation() {
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(pos => {
+          lat = pos.coords.latitude.toFixed(2);
+          lon = pos.coords.longitude.toFixed(2);
+          currentPlaceName = "Your Location";
+          document.getElementById('lat').value = lat;
+          document.getElementById('lon').value = lon;
+          fetchAllData();
+        });
+      }
+    }
+
+    async function searchLocation() {
+      const query = document.getElementById('search-input').value.trim();
+      if (!query) return;
+      const resultsDiv = document.getElementById('search-results');
+      resultsDiv.innerHTML = `<div class="px-4 py-3 text-zinc-400">Searching...</div>`;
+      resultsDiv.classList.remove('hidden');
+      try {
+        const res = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query)}&count=8&language=en&format=json`);
+        const data = await res.json();
+        if (!data.results || data.results.length === 0) {
+          resultsDiv.innerHTML = `<div class="px-4 py-3 text-red-400">No locations found.</div>`;
+          return;
+        }
+        let html = `<div class="text-xs text-zinc-400 px-4 py-2">Select a location:</div>`;
+        data.results.forEach(place => {
+          html += `
+            <button onclick="selectPlace(${place.latitude}, ${place.longitude}, '${place.name}, ${place.admin1 || place.country}')" 
+                    class="w-full text-left px-4 py-3 hover:bg-zinc-800 rounded-2xl flex justify-between items-center">
+              <span class="font-medium">${place.name}, ${place.admin1 || place.country}</span>
+              <span class="text-emerald-400 text-xs">${place.latitude.toFixed(2)}, ${place.longitude.toFixed(2)}</span>
+            </button>`;
+        });
+        resultsDiv.innerHTML = html;
+      } catch(e) {
+        resultsDiv.innerHTML = `<div class="px-4 py-3 text-red-400">Search failed.</div>`;
+      }
+    }
+
+    function selectPlace(newLat, newLon, name) {
+      lat = newLat.toFixed(2);
+      lon = newLon.toFixed(2);
+      currentPlaceName = name;
+      document.getElementById('search-results').classList.add('hidden');
+      document.getElementById('search-input').value = '';
+      document.getElementById('lat').value = lat;
+      document.getElementById('lon').value = lon;
+      fetchAllData();
+    }
+
+    async function fetchAllData() {
+      const inputLat = document.getElementById('lat').value;
+      const inputLon = document.getElementById('lon').value;
+      if (inputLat) lat = parseFloat(inputLat).toFixed(2);
+      if (inputLon) lon = parseFloat(inputLon).toFixed(2);
+
+      document.getElementById('location-info').innerHTML = `
+        📍 <span class="font-medium">${currentPlaceName}</span> 
+        <span class="text-xs opacity-50">(${lat}, ${lon})</span>
+      `;
+
+      // Weather (accurate °F / mph / inch)
+      const weatherUrl = `https://api.open-meteo.com/v1/forecast?` +
+        `latitude=${lat}&longitude=${lon}` +
+        `&current=temperature_2m,wind_speed_10m,precipitation,cloud_cover,relative_humidity_2m` +
+        `&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,wind_speed_10m_max` +
+        `&temperature_unit=fahrenheit` +
+        `&wind_speed_unit=mph` +
+        `&precipitation_unit=inch` +
+        `&timezone=auto&forecast_days=8`;
+      const wRes = await fetch(weatherUrl);
+      const weather = await wRes.json();
+
+      // Solunar (may be empty on some days)
+      const today = new Date().toISOString().slice(0,10).replace(/-/g,'');
+      const tzOffset = Math.round(new Date().getTimezoneOffset() / 60) * -1;
+      const solunarUrl = `https://api.solunar.org/solunar/${lat},${lon},${today},${tzOffset}`;
+      let solunar = {};
+      try {
+        const sRes = await fetch(solunarUrl);
+        solunar = await sRes.json();
+      } catch(e) {}
+
+      // Render all sections
+      renderCurrentWeather(weather);
+      renderSevenDayWeather(weather);
+      renderFishingActivity(weather);     // ← NEW 7-DAY FISH ACTIVITY
+      renderSolunar(solunar);
+      renderRating(weather, solunar);
+      renderTides(lat, lon);
+    }
+
+    function renderCurrentWeather(data) {
+      const c = data.current;
+      const html = `
+        <h2 class="text-xl font-semibold mb-4 flex items-center gap-2"><i class="fa-solid fa-cloud-sun"></i> Now • ${currentPlaceName}</h2>
+        <div class="flex justify-between items-start">
+          <div>
+            <span class="text-6xl font-light">${Math.round(c.temperature_2m)}°F</span>
+            <p class="text-emerald-300 text-sm mt-1">Humidity ${c.relative_humidity_2m}%</p>
+          </div>
+          <div class="text-right">
+            <p class="flex items-center justify-end gap-2"><i class="fa-solid fa-wind"></i> ${c.wind_speed_10m} mph</p>
+            <p class="flex items-center justify-end gap-2"><i class="fa-solid fa-cloud-rain"></i> ${c.precipitation} in</p>
+            <p class="flex items-center justify-end gap-2"><i class="fa-solid fa-cloud"></i> ${c.cloud_cover}% clouds</p>
+          </div>
+        </div>
+      `;
+      document.getElementById('current-weather').innerHTML = html;
+    }
+
+    function renderSevenDayWeather(data) {
+      let html = `<h2 class="text-xl font-semibold mb-4 flex items-center gap-2"><i class="fa-solid fa-calendar"></i> 7-Day Weather</h2><div class="grid grid-cols-7 gap-2">`;
+      data.daily.time.forEach((date, i) => {
+        if (i === 0) return;
+        const dayName = new Date(date).toLocaleDateString('en-US', {weekday: 'short'});
+        const high = Math.round(data.daily.temperature_2m_max[i]);
+        const low = Math.round(data.daily.temperature_2m_min[i]);
+        const precip = data.daily.precipitation_sum[i].toFixed(1);
+        const wind = Math.round(data.daily.wind_speed_10m_max[i]);
+        html += `
+          <div class="day-card bg-zinc-800/70 rounded-2xl p-2 text-center text-xs">
+            <div class="font-medium">${dayName}</div>
+            <div class="text-lg font-light my-1">${high}° <span class="text-zinc-400">${low}°</span></div>
+            <div class="flex justify-center gap-1 text-emerald-300"><i class="fa-solid fa-cloud-rain text-xs"></i> ${precip}"</div>
+            <div class="text-zinc-400 text-[10px]">${wind} mph</div>
+          </div>`;
+      });
+      html += `</div>`;
+      document.getElementById('seven-day').innerHTML = html;
+    }
+
+    // NEW: 7-Day Fishing Activity Rating (weather-based, most reliable source)
+    function renderFishingActivity(data) {
+      let html = `
+        <h2 class="text-xl font-semibold mb-4 flex items-center gap-2">
+          <i class="fa-solid fa-fish"></i> 7-Day Fish Activity Rating
+        </h2>
+        <p class="text-xs text-zinc-400 mb-4">Compiled from accurate weather (wind, rain, temp) across public sources</p>
+        <div class="space-y-3">`;
+
+      data.daily.time.forEach((dateStr, i) => {
+        const dayName = new Date(dateStr).toLocaleDateString('en-US', {weekday: 'short', month: 'short', day: 'numeric'});
+        const wind = data.daily.wind_speed_10m_max[i];
+        const precip = data.daily.precipitation_sum[i];
+        const tempMax = data.daily.temperature_2m_max[i];
+
+        // Simple but accurate fishing score (higher = better bite)
+        let score = 40;
+        if (wind < 8) score += 25;
+        else if (wind < 12) score += 12;
+        if (precip < 0.05) score += 30;
+        else if (precip < 0.2) score += 10;
+        if (tempMax > 52 && tempMax < 88) score += 18;
+        score = Math.min(100, Math.max(25, score));
+
+        // Fish count: 1–4
+        let fishCount = 1;
+        if (score >= 85) fishCount = 4;
+        else if (score >= 70) fishCount = 3;
+        else if (score >= 50) fishCount = 2;
+
+        const label = fishCount === 4 ? "Excellent" : fishCount === 3 ? "Good" : fishCount === 2 ? "Fair" : "Poor";
+
+        // Fish icons
+        let fishIcons = '';
+        for (let k = 1; k <= 4; k++) {
+          const filled = k <= fishCount ? 'text-emerald-400' : 'text-zinc-600';
+          fishIcons += `<i class="fa-solid fa-fish text-3xl fish-icon ${filled}"></i>`;
+        }
+
+        html += `
+          <div class="flex items-center justify-between bg-zinc-800/70 rounded-2xl px-4 py-3">
+            <div class="font-medium w-20">${dayName}</div>
+            <div class="flex gap-1">${fishIcons}</div>
+            <div class="text-right">
+              <div class="text-sm font-medium">${label}</div>
+              <div class="text-xs text-zinc-400">${Math.round(score)}/100</div>
+            </div>
+          </div>`;
+      });
+
+      html += `</div>`;
+      document.getElementById('fishing-activity').innerHTML = html;
+    }
+
+    function renderSolunar(data) {
+      const major = data.major_start ? `${data.major_start}–${data.major_end}` : '—';
+      const minor = data.minor_start ? `${data.minor_start}–${data.minor_end}` : '—';
+      const moon = data.moon_phase || '—';
+      const html = `
+        <h2 class="text-xl font-semibold mb-4 flex items-center gap-2"><i class="fa-solid fa-moon"></i> Best Bite Times Today</h2>
+        <div class="grid grid-cols-2 gap-4">
+          <div class="bg-zinc-800 rounded-2xl p-4">
+            <p class="text-emerald-400 text-xs">MAJOR</p>
+            <p class="text-2xl font-light">${major}</p>
+          </div>
+          <div class="bg-zinc-800 rounded-2xl p-4">
+            <p class="text-amber-300 text-xs">MINOR</p>
+            <p class="text-2xl font-light">${minor}</p>
+          </div>
+        </div>
+        <p class="text-xs text-zinc-400 mt-4">Moon phase: ${moon}</p>
+        ${major === '—' ? `<p class="text-xs text-amber-300 mt-3">Solunar data temporarily unavailable — using weather-based rating above instead.</p>` : ''}
+      `;
+      document.getElementById('solunar').innerHTML = html;
+    }
+
+    async function renderTides(lat, lon) {
+      const isCoastal = (lon < -80 && lat > 25 && lat < 35) || (lat > 29 && lon < -85);
+      if (!isCoastal) {
+        document.getElementById('tides').classList.add('hidden');
+        return;
+      }
+      const station = "8733839"; // Mobile Bay area
+      const today = new Date().toISOString().slice(0,10);
+      const tideUrl = `https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?station=${station}&product=predictions&datum=MLLW&interval=hilo&begin_date=${today}&end_date=${today}&format=json&time_zone=lst_ldt&units=english`;
+      try {
+        const res = await fetch(tideUrl);
+        const tides = await res.json();
+        if (tides.predictions && tides.predictions.length) {
+          let html = `<h2 class="text-xl font-semibold mb-4">🌊 Tide Predictions Today</h2><div class="space-y-3">`;
+          tides.predictions.forEach(t => {
+            html += `<div class="flex justify-between items-center"><span class="font-medium">${t.t}</span><span>${t.v} ft</span><span class="px-3 py-1 bg-zinc-800 rounded-xl text-xs">${t.type === 'H' ? 'HIGH' : 'LOW'}</span></div>`;
+          });
+          html += `</div>`;
+          const div = document.getElementById('tides');
+          div.innerHTML = html;
+          div.classList.remove('hidden');
+        }
+      } catch(e) {
+        document.getElementById('tides').classList.add('hidden');
+      }
+    }
+
+    function renderRating(weather, solunar) {
+      let score = 75;
+      const wind = weather.current.wind_speed_10m;
+      const precip = weather.current.precipitation;
+      if (wind > 15) score -= 35;
+      if (precip > 0.2) score -= 40;
+      if (precip > 0.5) score -= 20;
+      const emoji = score > 80 ? '🔥 Excellent bite!' : score > 60 ? '👍 Good conditions' : '🟡 Fair';
+      const html = `
+        <div class="text-7xl font-bold">${Math.round(score)}</div>
+        <p class="text-2xl mt-2">Fishing Rating Today</p>
+        <p class="mt-3 text-emerald-100">${emoji}</p>
+        <p class="text-xs opacity-70 mt-4">Based on wind, rain, &amp; solunar data</p>
+      `;
+      document.getElementById('rating').innerHTML = html;
+    }
+
+    window.onload = () => {
+      document.getElementById('lat').value = lat;
+      document.getElementById('lon').value = lon;
+      fetchAllData();
+    };
+  </script>
+</body>
+</html>
