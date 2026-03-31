@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FishCast • Weather + Fishing Forecast</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; }
+    .card { transition: all 0.3s; }
+  </style>
+</head>
+<body class="bg-zinc-950 text-white min-h-screen pb-12">
+  <div class="max-w-xl mx-auto px-4">
+    <header class="py-8 flex items-center justify-between">
+      <h1 class="text-3xl font-bold flex items-center gap-2">
+        <i class="fa-solid fa-fish text-emerald-400"></i> FishCast
+      </h1>
+      <button onclick="getLocation()" class="bg-emerald-600 hover:bg-emerald-500 px-4 py-2 rounded-xl flex items-center gap-2 text-sm">
+        <i class="fa-solid fa-location-dot"></i> Use My Location
+      </button>
+    </header>
+
+    <div id="location-info" class="mb-6 text-sm text-zinc-400"></div>
+
+    <!-- Inputs -->
+    <div class="flex gap-3 mb-8">
+      <input id="lat" type="text" placeholder="Latitude (e.g. 33.52)" class="flex-1 bg-zinc-900 border border-zinc-700 rounded-2xl px-4 py-3 text-sm">
+      <input id="lon" type="text" placeholder="Longitude (e.g. -86.80)" class="flex-1 bg-zinc-900 border border-zinc-700 rounded-2xl px-4 py-3 text-sm">
+      <button onclick="fetchAllData()" class="bg-white text-black px-8 rounded-2xl font-medium">Go</button>
+    </div>
+
+    <!-- Weather -->
+    <div id="weather" class="card bg-zinc-900 rounded-3xl p-6 mb-6"></div>
+
+    <!-- Solunar -->
+    <div id="solunar" class="card bg-zinc-900 rounded-3xl p-6 mb-6"></div>
+
+    <!-- Tides (optional) -->
+    <div id="tides" class="card bg-zinc-900 rounded-3xl p-6 hidden"></div>
+
+    <!-- Fishing Rating -->
+    <div id="rating" class="card bg-gradient-to-r from-emerald-500 to-teal-500 rounded-3xl p-6 text-center"></div>
+  </div>
+
+  <script>
+    // Default to Birmingham, AL
+    let lat = 33.52;
+    let lon = -86.80;
+
+    function getLocation() {
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(pos => {
+          lat = pos.coords.latitude.toFixed(2);
+          lon = pos.coords.longitude.toFixed(2);
+          document.getElementById('lat').value = lat;
+          document.getElementById('lon').value = lon;
+          fetchAllData();
+        });
+      }
+    }
+
+    async function fetchAllData() {
+      lat = document.getElementById('lat').value || lat;
+      lon = document.getElementById('lon').value || lon;
+
+      document.getElementById('location-info').innerHTML = `📍 ${lat}, ${lon}`;
+
+      // 1. Open-Meteo Weather
+      const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,wind_speed_10m,precipitation,cloud_cover&hourly=temperature_2m,wind_speed_10m,precipitation,cloud_cover&forecast_days=7`;
+      const wRes = await fetch(weatherUrl);
+      const weather = await wRes.json();
+
+      // 2. Solunar (today)
+      const today = new Date().toISOString().slice(0,10).replace(/-/g,'');
+      const tzOffset = Math.round(new Date().getTimezoneOffset() / 60) * -1; // e.g. -5 or -6 for AL
+      const solunarUrl = `https://api.solunar.org/solunar/${lat},${lon},${today},${tzOffset}`;
+      const sRes = await fetch(solunarUrl);
+      const solunar = await sRes.json();
+
+      // 3. Render everything
+      renderWeather(weather);
+      renderSolunar(solunar);
+      renderRating(weather, solunar);
+
+      // Optional: Add tide station for coastal (example: Mobile Bay, AL - change ID as needed)
+      // Example stations: 8733839 (Meaher State Park), 8733821 (Point Clear)
+      const tideStation = "8733839"; // Change or make selectable
+      const tideUrl = `https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?station=${tideStation}&product=predictions&datum=MLLW&interval=hilo&begin_date=${today}&end_date=${today}&format=json&time_zone=lst_ldt&units=english`;
+      try {
+        const tRes = await fetch(tideUrl);
+        const tides = await tRes.json();
+        renderTides(tides);
+      } catch(e) { /* no tide data for inland */ }
+    }
+
+    function renderWeather(data) {
+      const current = data.current;
+      let html = `
+        <h2 class="text-xl font-semibold mb-4 flex items-center gap-2"><i class="fa-solid fa-cloud-sun"></i> Today's Weather</h2>
+        <div class="grid grid-cols-2 gap-4">
+          <div><span class="text-5xl font-light">${current.temperature_2m}°F</span></div>
+          <div class="text-right">
+            <p>Wind: <strong>${current.wind_speed_10m} mph</strong></p>
+            <p>Rain: <strong>${current.precipitation} in</strong></p>
+            <p>Clouds: <strong>${current.cloud_cover}%</strong></p>
+          </div>
+        </div>
+        <p class="text-xs text-zinc-400 mt-4">Hourly data available in console for now (we can expand later)</p>
+      `;
+      document.getElementById('weather').innerHTML = html;
+    }
+
+    function renderSolunar(data) {
+      let html = `<h2 class="text-xl font-semibold mb-4 flex items-center gap-2"><i class="fa-solid fa-moon"></i> Best Bite Times Today</h2>`;
+      html += `<p class="text-emerald-300">Major: ${data.major_start || '—'} – ${data.major_end || '—'}</p>`;
+      html += `<p class="text-amber-300">Minor: ${data.minor_start || '—'} – ${data.minor_end || '—'}</p>`;
+      html += `<p class="text-xs mt-3 text-zinc-400">Moon phase: ${data.moon_phase || '—'} • Solunar score based on sun/moon position</p>`;
+      document.getElementById('solunar').innerHTML = html;
+    }
+
+    function renderTides(data) {
+      if (!data.predictions) return;
+      let html = `<h2 class="text-xl font-semibold mb-4">🌊 Tide Predictions Today</h2><div class="space-y-2 text-sm">`;
+      data.predictions.forEach(t => {
+        html += `<div class="flex justify-between"><span>${t.t} ${t.v} ft</span><span class="font-medium">${t.type === 'H' ? 'High' : 'Low'}</span></div>`;
+      });
+      html += `</div>`;
+      document.getElementById('tides').classList.remove('hidden');
+      document.getElementById('tides').innerHTML = html;
+    }
+
+    function renderRating(weather, solunar) {
+      // Simple rating logic (customize as you like)
+      let score = 70;
+      if (weather.current.wind_speed_10m > 15) score -= 30;
+      if (weather.current.precipitation > 0.1) score -= 40;
+      const ratingHTML = `
+        <div class="text-6xl font-bold">${score}</div>
+        <p class="text-2xl mt-1">Fishing Conditions</p>
+        <p class="text-emerald-100 mt-2">${score > 75 ? '🔥 Excellent day!' : score > 50 ? '👍 Good conditions' : '🟡 Fair — watch the wind/rain'}</p>
+      `;
+      document.getElementById('rating').innerHTML = ratingHTML;
+    }
+
+    // Auto-load Birmingham on start
+    window.onload = () => {
+      document.getElementById('lat').value = lat;
+      document.getElementById('lon').value = lon;
+      fetchAllData();
+    };
+  </script>
+</body>
+</html>
